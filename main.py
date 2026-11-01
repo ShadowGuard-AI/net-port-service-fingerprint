@@ -27,7 +27,11 @@ def probe_http(host, port):
             request = b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n"
             s.sendall(request)
             response = s.recv(4096)
-            
+            # One read, up to 4096 bytes, is the whole evidence. A long
+            # header block can push the Server line past that cut, and
+            # the checks below only test whether the text "HTTP" and a
+            # case sensitive "Server:" appear somewhere in what arrived.
+
             response_str = response.decode('utf-8', errors='ignore')  # Decode response
 
             if "HTTP" in response_str:
@@ -99,6 +103,8 @@ def probe_smtp(host, port):
             s.connect((host, port))
             banner = s.recv(1024).decode('utf-8', errors='ignore').strip()
 
+            # "220" anywhere in the banner counts, not just at the
+            # start, so a version string containing 220 also passes.
             if "220" in banner:  # SMTP banner usually starts with 220
                 s.sendall(b"EHLO example.com\r\n")
                 ehlo_response = s.recv(1024).decode('utf-8', errors='ignore').strip()
@@ -132,6 +138,10 @@ def fingerprint_service(host, port):
         str: Service information if identified, None otherwise.
     """
     try:
+        # Every probe opens a fresh connection, in this fixed order, so
+        # an SSH port is first sent an HTTP GET and a silent service
+        # burns a full 5 second timeout per probe before the next one
+        # tries. The target sees up to three separate connections.
         # Try HTTP first
         http_info = probe_http(host, port)
         if http_info:
@@ -181,6 +191,9 @@ def validate_input(host, port):
         bool: True if the input is valid, False otherwise.
     """
     try:
+        # inet_aton is lenient: shorthand forms like 127.1, and even a
+        # bare number, parse as addresses. Anything it rejects falls
+        # through to a DNS lookup, which the probes then repeat anyway.
         socket.inet_aton(host) #Verify the host is a valid ip address.
     except socket.error:
         try:
